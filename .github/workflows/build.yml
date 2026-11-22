@@ -20,7 +20,7 @@ jobs:
 
     - name: Run AOT Asset Creator
       run: |
-        echo "Iniciando a tradução dos assets do Xbox 360..."
+        echo "Traduzindo assets..."
         python tools/aot_creator.py
 
     - name: Recompile XEX code
@@ -28,19 +28,23 @@ jobs:
         echo "Traduzindo código PowerPC para ARM64..."
         python tools/recompiler.py
 
-    # 3. COMPILAÇÃO DO APP iOS (AGORA COM BINÁRIO REAL)
-    - name: Build iOS App
+    # COMPILAÇÃO REAL DO APP COM OBJETIVE-C E METAL
+    - name: Build iOS App (Metal Engine)
       run: |
-        echo "Compilando o aplicativo iOS..."
         mkdir -p Payload/NGBC.app
-
-        # Pega o caminho do SDK do iPhone
         SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
 
-        # Compila o nosso código C em um executável para iPhone (arm64)
-        xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK_PATH" -miphoneos-version-min=10.0 src/main.c -o Payload/NGBC.app/NGBC
+        # Copia os assets traduzidos para dentro do app
+        cp -r src/converted_assets Payload/NGBC.app/
 
-        # Cria o Info.plist
+        # Compila os arquivos .m e linka com as bibliotecas do iOS
+        xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK_PATH" \
+          -miphoneos-version-min=12.0 \
+          -framework UIKit -framework Foundation -framework Metal -framework MetalKit \
+          src/main.m src/AppDelegate.m src/ViewController.m \
+          -o Payload/NGBC.app/NGBC
+
+        # Info.plist atualizado
         cat > Payload/NGBC.app/Info.plist << 'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -54,13 +58,16 @@ jobs:
             <string>NGBC</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
+            <key>MinimumOSVersion</key>
+            <string>12.0</string>
+            <key>UILaunchStoryboardName</key>
+            <string></string>
         </dict>
         </plist>
         EOF
 
     - name: Package to IPA
       run: |
-        echo "Empacotando o arquivo .ipa..."
         zip -r NGBC.ipa Payload/
 
     - name: Upload IPA Artifact
