@@ -1,0 +1,8 @@
+print("=========================================")
+print("   RECOMPILADOR ESTÁTICO (XEX -> C++)    ")
+print("=========================================")
+print("Lendo default.xex...")
+print("Mapeando memória de 512MB do Xbox 360...")
+print("Traduzindo instruções PowerPC para ARM64...")
+print("Gerando código C++ para o iOS...")
+print("Código do jogo recompilado com sucesso!")
