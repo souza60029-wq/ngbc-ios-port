@@ -1,0 +1,70 @@
+name: NGBC iOS AOT Build Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Permite rodar manualmente
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    # 1. FÁBRICA AOT: Processa Texturas, Áudio e Shaders
+    - name: Run AOT Asset Creator
+      run: |
+        echo "Iniciando a tradução dos assets do Xbox 360..."
+        python tools/aot_creator.py
+
+    # 2. RECOMPILADOR (Simulação)
+    - name: Recompile XEX code
+      run: |
+        echo "Traduzindo código PowerPC para ARM64..."
+        python tools/recompiler.py
+
+    # 3. COMPILAÇÃO DO APP iOS
+    - name: Build iOS App (Simulação Hello World)
+      run: |
+        echo "Compilando o aplicativo iOS..."
+        mkdir -p Payload/NGBC.app
+        echo "Criando executável falso..."
+        touch Payload/NGBC.app/NGBC
+        
+        # Criando o arquivo Info.plist obrigatório para iOS
+        cat > Payload/NGBC.app/Info.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>NGBC</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.seuuser.ngbc</string>
+            <key>CFBundleName</key>
+            <string>NGBC</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+        </dict>
+        </plist>
+        EOF
+
+    # 4. EMPACOTAR EM IPA
+    - name: Package to IPA
+      run: |
+        echo "Empacotando o arquivo .ipa..."
+        zip -r NGBC.ipa Payload/
+
+    # 5. ENTREGAR O ARQUIVO PARA DOWNLOAD
+    - name: Upload IPA Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: NGBC-iOS-IPA
+        path: NGBC.ipa
