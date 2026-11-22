@@ -13,21 +13,21 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Baixar e extrair o pacote STFS
+      - name: Baixar, extrair e espiar
         shell: bash
         run: |
-          mkdir -p logs/teste_02
-          cat > logs/teste_02/00_comando.txt <<'EOF_CMD'
+          mkdir -p logs/teste_03
+          cat > logs/teste_03/00_comando.txt <<'EOF_CMD'
           set -e
-          curl -L --fail -o game.pkg "https://github.com/souza60029-wq/ngbc-ios-port/releases/download/v1.0/B26872135B74C4F9A63367A857857D22456064C258"
-          ls -l game.pkg
-          python tools/stfs_extract.py game.pkg game_extracted
+          curl -sS -L --fail -o game.pkg "https://github.com/souza60029-wq/ngbc-ios-port/releases/download/v1.0/B26872135B74C4F9A63367A857857D22456064C258"
+          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_03/02_stfs.txt
+          python tools/peek.py game_extracted
           EOF_CMD
-          bash logs/teste_02/00_comando.txt 2>&1 | tee logs/teste_02/01_saida.txt
+          bash logs/teste_03/00_comando.txt 2>&1 | tee logs/teste_03/01_saida.txt
 
       - name: Guardar logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-teste-02
+          name: logs-teste-03
           path: logs/
