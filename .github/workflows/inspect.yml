@@ -13,30 +13,52 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Extrair, compilar XenonRecomp e analisar o XEX
+      - name: Extrair, compilar XenonRecomp e gerar C++
         shell: bash
         run: |
-          mkdir -p logs/teste_04
-          cat > logs/teste_04/00_comando.txt <<'EOF_CMD'
+          mkdir -p logs/teste_05/hdr
+          cat > logs/teste_05/00_comando.txt <<'EOF_CMD'
           set -e
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang cmake ninja-build
           curl -sS -L --fail -o game.pkg "https://github.com/souza60029-wq/ngbc-ios-port/releases/download/v1.0/B26872135B74C4F9A63367A857857D22456064C258"
-          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_04/02_stfs.txt
-          git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/hedge-dev/XenonRecomp.git
-          cmake -S XenonRecomp -B xr_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ > logs/teste_04/03_cmake.txt 2>&1 || { tail -n 60 logs/teste_04/03_cmake.txt; exit 1; }
-          cmake --build xr_build -j4 > logs/teste_04/04_build.txt 2>&1 || { tail -n 60 logs/teste_04/04_build.txt; exit 1; }
-          ANALYSE=$(find xr_build -type f -name XenonAnalyse -perm -u+x | head -n1)
-          echo "binario: $ANALYSE"
-          "$ANALYSE" game_extracted/default.xex logs/teste_04/switch_tables.toml
-          ls -l logs/teste_04
-          head -n 30 logs/teste_04/switch_tables.toml
+          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_05/02_stfs.txt
+          git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/hedge-dev/XenonRecomp.git > /dev/null 2>&1
+          cmake -S XenonRecomp -B xr_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ > logs/teste_05/03_cmake.txt 2>&1 || { tail -n 60 logs/teste_05/03_cmake.txt; exit 1; }
+          cmake --build xr_build -j4 > logs/teste_05/04_build.txt 2>&1 || { tail -n 60 logs/teste_05/04_build.txt; exit 1; }
+          cp XenonRecomp/README.md logs/teste_05/hdr/README_xenonrecomp.md
+          find XenonRecomp -maxdepth 3 \( -name xex.h -o -name image.h -o -name xex_patcher.h -o -name ppc_context.h -o -name recompiler_config.h \) -exec cp {} logs/teste_05/hdr/ \;
+          ls -l logs/teste_05/hdr
+          XA=$(find xr_build -type f -name XenonAnalyse -perm -u+x | head -n1)
+          "$XA" game_extracted/default.xex logs/teste_05/switch_tables.toml
+          cat > xr.toml <<'EOF_TOML'
+          [main]
+          file_path = "game_extracted/default.xex"
+          out_directory_path = "ppc_out"
+          switch_table_file_path = "logs/teste_05/switch_tables.toml"
+          EOF_TOML
+          mkdir -p ppc_out
+          XR=$(find xr_build -type f -name XenonRecomp -perm -u+x | head -n1)
+          CTX=$(find XenonRecomp -name ppc_context.h | head -n1)
+          echo "XenonRecomp: $XR | ctx: $CTX"
+          set +e
+          timeout 1500 "$XR" xr.toml "$CTX" > logs/teste_05/05_recomp.txt 2>&1
+          echo "exit XenonRecomp: $?"
+          set -e
+          tail -n 40 logs/teste_05/05_recomp.txt
+          echo "--- linhas com erro/aviso:"
+          grep -ciE "error|unable|invalid|unknown|unrecogni" logs/teste_05/05_recomp.txt || true
+          ls ppc_out | head -20
+          ls ppc_out | wc -l
+          du -sh ppc_out
+          cat ppc_out/*.cpp 2>/dev/null | wc -l
+          head -n 40 ppc_out/ppc_config.h 2>/dev/null || true
           EOF_CMD
-          bash logs/teste_04/00_comando.txt 2>&1 | tee logs/teste_04/01_saida.txt
+          bash logs/teste_05/00_comando.txt 2>&1 | tee logs/teste_05/01_saida.txt
 
       - name: Guardar logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-teste-04
+          name: logs-teste-05
           path: logs/
