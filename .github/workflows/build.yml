@@ -20,12 +20,10 @@ jobs:
 
     - name: Run AOT Asset Creator
       run: |
-        echo "Traduzindo assets..."
         python tools/aot_creator.py
 
     - name: Recompile XEX code
       run: |
-        echo "Traduzindo código PowerPC para ARM64..."
         python tools/recompiler.py
 
     - name: Build iOS App (Metal Engine + Shaders)
@@ -35,9 +33,11 @@ jobs:
 
         cp -r src/converted_assets Payload/NGBC.app/
 
-        # 1. Compila os Shaders Metal para .metallib
+        # 1. Compila os Shaders Metal com compatibilidade forçada
         echo "Compilando Shaders Metal..."
-        xcrun -sdk iphoneos metal -c src/Shaders.metal -o Shaders.air
+        xcrun -sdk iphoneos metal -c src/Shaders.metal -o Shaders.air \
+          -std=ios-metal1.1 \
+          -mios-version-min=12.0
         xcrun -sdk iphoneos metallib Shaders.air -o Payload/NGBC.app/default.metallib
 
         # 2. Compila os arquivos Objective-C
