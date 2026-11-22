@@ -1,10 +1,10 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Estrutura que recebe os dados do vértice direto do buffer de memória
+// A MÁGICA ACONTECE AQUI: usando "packed_" para alinhar a memória com o C
 struct VertexIn {
-    float4 position;
-    float2 texCoord;
+    packed_float4 position;
+    packed_float2 texCoord;
 };
 
 struct VertexOut {
@@ -15,8 +15,9 @@ struct VertexOut {
 vertex VertexOut vertex_main(const device VertexIn *vertices [[buffer(0)]],
                              uint vid [[vertex_id]]) {
     VertexOut out;
-    out.position = vertices[vid].position;
-    out.texCoord = vertices[vid].texCoord;
+    // Precisamos converter para float4 normal aqui dentro
+    out.position = float4(vertices[vid].position);
+    out.texCoord = float2(vertices[vid].texCoord);
     return out;
 }
 
