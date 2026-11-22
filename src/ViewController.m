@@ -12,34 +12,29 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     
-    // Se a tela ficar VERMELHA, significa que a MTKView não está cobrindo ela.
     self.view.backgroundColor = [UIColor redColor];
     
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
     self.metalView = [[MTKView alloc] initWithFrame:self.view.bounds device:device];
     self.metalView.delegate = self;
-    
-    // Se o Metal estiver funcionando, a tela vai ficar ROSA (Magenta).
-    self.metalView.clearColor = MTLClearColorMake(1.0, 0.0, 1.0, 1.0); 
+    self.metalView.clearColor = MTLClearColorMake(0.1, 0.1, 0.1, 1.0); // Fundo cinza escuro
     self.metalView.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
     [self.view addSubview:self.metalView];
     
-    // Cria a caixa de debug na tela
-    self.debugLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 60, self.view.bounds.size.width - 20, 200)];
+    self.debugLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 60, self.view.bounds.size.width - 20, 100)];
     self.debugLabel.numberOfLines = 0;
     self.debugLabel.textColor = [UIColor whiteColor];
     self.debugLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.8];
     self.debugLabel.font = [UIFont systemFontOfSize:14];
-    self.debugLabel.text = @"Iniciando Motor...";
+    self.debugLabel.text = @"Motor OK! Renderizando quadrado...";
     [self.view addSubview:self.debugLabel];
     
     self.commandQueue = [device newCommandQueue];
     
     NSError *error = nil;
-    // Tenta carregar a biblioteca de shaders
     id<MTLLibrary> library = [device newDefaultLibrary];
     if (!library) {
-        self.debugLabel.text = @"ERRO FATAL: O arquivo default.metallib nao foi encontrado dentro do app!";
+        self.debugLabel.text = @"ERRO FATAL: default.metallib nao encontrado!";
         return;
     }
     
@@ -50,8 +45,7 @@
     
     self.pipelineState = [device newRenderPipelineStateWithDescriptor:pipelineDesc error:&error];
     if (error || !self.pipelineState) {
-        // Se der erro, imprime na tela!
-        self.debugLabel.text = [NSString stringWithFormat:@"ERRO NO PIPELINE:\n%@", error.localizedDescription];
+        self.debugLabel.text = [NSString stringWithFormat:@"ERRO PIPELINE:\n%@", error.localizedDescription];
         return;
     }
     
@@ -63,9 +57,6 @@
     };
     self.vertexBuffer = [device newBufferWithBytes:vertices length:sizeof(vertices) options:MTLResourceStorageModeShared];
     
-    self.debugLabel.text = @"Motor OK! Renderizando quadrado...";
-    
-    // Força a renderização contínua (Loop de 60 FPS)
     self.metalView.paused = NO;
     self.metalView.enableSetNeedsDisplay = NO;
 }
@@ -81,6 +72,13 @@
     if (drawable && passDesc) {
         id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
         id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:passDesc];
+        
+        // FORÇANDO O VIEWPORT (Área de desenho)
+        MTLViewport viewport = { 0.0, 0.0, (double)view.drawableSize.width, (double)view.drawableSize.height, 0.0, 1.0 };
+        [encoder setViewport:viewport];
+        
+        MTLScissorRect scissor = { 0, 0, (NSUInteger)view.drawableSize.width, (NSUInteger)view.drawableSize.height };
+        [encoder setScissorRect:scissor];
         
         [encoder setRenderPipelineState:self.pipelineState];
         [encoder setVertexBuffer:self.vertexBuffer offset:0 atIndex:0];
