@@ -3,7 +3,7 @@ name: NGBC iOS AOT Build Pipeline
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Permite rodar manualmente
+  workflow_dispatch:
 
 jobs:
   build-ios:
@@ -18,27 +18,29 @@ jobs:
       with:
         python-version: '3.10'
 
-    # 1. FÁBRICA AOT: Processa Texturas, Áudio e Shaders
     - name: Run AOT Asset Creator
       run: |
         echo "Iniciando a tradução dos assets do Xbox 360..."
         python tools/aot_creator.py
 
-    # 2. RECOMPILADOR (Simulação)
     - name: Recompile XEX code
       run: |
         echo "Traduzindo código PowerPC para ARM64..."
         python tools/recompiler.py
 
-    # 3. COMPILAÇÃO DO APP iOS
-    - name: Build iOS App (Simulação Hello World)
+    # 3. COMPILAÇÃO DO APP iOS (AGORA COM BINÁRIO REAL)
+    - name: Build iOS App
       run: |
         echo "Compilando o aplicativo iOS..."
         mkdir -p Payload/NGBC.app
-        echo "Criando executável falso..."
-        touch Payload/NGBC.app/NGBC
-        
-        # Criando o arquivo Info.plist obrigatório para iOS
+
+        # Pega o caminho do SDK do iPhone
+        SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+
+        # Compila o nosso código C em um executável para iPhone (arm64)
+        xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK_PATH" -miphoneos-version-min=10.0 src/main.c -o Payload/NGBC.app/NGBC
+
+        # Cria o Info.plist
         cat > Payload/NGBC.app/Info.plist << 'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -56,13 +58,11 @@ jobs:
         </plist>
         EOF
 
-    # 4. EMPACOTAR EM IPA
     - name: Package to IPA
       run: |
         echo "Empacotando o arquivo .ipa..."
         zip -r NGBC.ipa Payload/
 
-    # 5. ENTREGAR O ARQUIVO PARA DOWNLOAD (ATUALIZADO PARA V4)
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
       with:
