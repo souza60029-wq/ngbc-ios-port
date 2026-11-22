@@ -1,22 +1,22 @@
 import os
+import base64
 
 print("=========================================")
 print("   INICIANDO FÁBRICA AOT - NGBC iOS      ")
 print("=========================================")
 
-# Cria a pasta onde ficarão os assets traduzidos
-os.makedirs("src/converted_assets/metallib", exist_ok=True)
+os.makedirs("src/converted_assets", exist_ok=True)
 
-print("[1/3] Lendo arquivos do Xbox 360...")
-# (Aqui, no futuro, leremos o default.xex de verdade)
+# Vamos gerar um PNG de 256x256 (um quadriculado vermelho e branco)
+# Representação em base64 de uma imagem de teste válida
+png_data = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAABGdBTUEAALGPC/xhBQAAACBjSFJN"
+    "AAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAABmJLR0QA/wD/AP+gvaeTAAAA"
+    "VElEQVR42u3BAQ0AAADCoPdPbQ8HFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4G8wAAABJgH6VQAAAABJRU5ErkJggg=="
+)
 
-print("[2/3] Traduzindo Shaders do Xbox 360 (DirectX) para Metal (Apple)...")
-# Simulando a criação dos shaders pré-compilados
-with open("src/converted_assets/metallib/main.metallib", "w") as f:
-    f.write("SHADER_METAL_PRECOMPILADO_NGBC")
+with open("src/converted_assets/texture.png", "wb") as f:
+    f.write(png_data)
 
-print("[3/3] Convertendo Texturas para formato ASTC da Apple...")
-with open("src/converted_assets/texturas.astc", "w") as f:
-    f.write("TEXTURAS_DO_ROCK_E_TERRY")
-
-print("Fábrica AOT finalizada com sucesso!")
+print("[1/1] Textura de teste (texture.png) gerada com sucesso na pasta converted_assets.")
