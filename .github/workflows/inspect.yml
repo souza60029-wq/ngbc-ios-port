@@ -13,21 +13,30 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Baixar, extrair e espiar
+      - name: Extrair, compilar XenonRecomp e analisar o XEX
         shell: bash
         run: |
-          mkdir -p logs/teste_03
-          cat > logs/teste_03/00_comando.txt <<'EOF_CMD'
+          mkdir -p logs/teste_04
+          cat > logs/teste_04/00_comando.txt <<'EOF_CMD'
           set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang cmake ninja-build
           curl -sS -L --fail -o game.pkg "https://github.com/souza60029-wq/ngbc-ios-port/releases/download/v1.0/B26872135B74C4F9A63367A857857D22456064C258"
-          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_03/02_stfs.txt
-          python tools/peek.py game_extracted
+          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_04/02_stfs.txt
+          git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/hedge-dev/XenonRecomp.git
+          cmake -S XenonRecomp -B xr_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ > logs/teste_04/03_cmake.txt 2>&1 || { tail -n 60 logs/teste_04/03_cmake.txt; exit 1; }
+          cmake --build xr_build -j4 > logs/teste_04/04_build.txt 2>&1 || { tail -n 60 logs/teste_04/04_build.txt; exit 1; }
+          ANALYSE=$(find xr_build -type f -name XenonAnalyse -perm -u+x | head -n1)
+          echo "binario: $ANALYSE"
+          "$ANALYSE" game_extracted/default.xex logs/teste_04/switch_tables.toml
+          ls -l logs/teste_04
+          head -n 30 logs/teste_04/switch_tables.toml
           EOF_CMD
-          bash logs/teste_03/00_comando.txt 2>&1 | tee logs/teste_03/01_saida.txt
+          bash logs/teste_04/00_comando.txt 2>&1 | tee logs/teste_04/01_saida.txt
 
       - name: Guardar logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-teste-03
+          name: logs-teste-04
           path: logs/
