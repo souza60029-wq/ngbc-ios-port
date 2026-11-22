@@ -13,52 +13,57 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Extrair, compilar XenonRecomp e gerar C++
+      - name: Recompilar, coletar fontes e testar compilacao
         shell: bash
         run: |
-          mkdir -p logs/teste_05/hdr
-          cat > logs/teste_05/00_comando.txt <<'EOF_CMD'
+          mkdir -p logs/teste_06/src
+          cat > logs/teste_06/00_comando.txt <<'EOF_CMD'
           set -e
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang cmake ninja-build
           curl -sS -L --fail -o game.pkg "https://github.com/souza60029-wq/ngbc-ios-port/releases/download/v1.0/B26872135B74C4F9A63367A857857D22456064C258"
-          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_05/02_stfs.txt
+          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_06/02_stfs.txt
           git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/hedge-dev/XenonRecomp.git > /dev/null 2>&1
-          cmake -S XenonRecomp -B xr_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ > logs/teste_05/03_cmake.txt 2>&1 || { tail -n 60 logs/teste_05/03_cmake.txt; exit 1; }
-          cmake --build xr_build -j4 > logs/teste_05/04_build.txt 2>&1 || { tail -n 60 logs/teste_05/04_build.txt; exit 1; }
-          cp XenonRecomp/README.md logs/teste_05/hdr/README_xenonrecomp.md
-          find XenonRecomp -maxdepth 3 \( -name xex.h -o -name image.h -o -name xex_patcher.h -o -name ppc_context.h -o -name recompiler_config.h \) -exec cp {} logs/teste_05/hdr/ \;
-          ls -l logs/teste_05/hdr
+          cmake -S XenonRecomp -B xr_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ > logs/teste_06/03_cmake.txt 2>&1 || { tail -n 60 logs/teste_06/03_cmake.txt; exit 1; }
+          cmake --build xr_build -j4 > logs/teste_06/04_build.txt 2>&1 || { tail -n 60 logs/teste_06/04_build.txt; exit 1; }
           XA=$(find xr_build -type f -name XenonAnalyse -perm -u+x | head -n1)
-          "$XA" game_extracted/default.xex logs/teste_05/switch_tables.toml
+          "$XA" game_extracted/default.xex logs/teste_06/switch_tables.toml
           cat > xr.toml <<'EOF_TOML'
           [main]
           file_path = "game_extracted/default.xex"
           out_directory_path = "ppc_out"
-          switch_table_file_path = "logs/teste_05/switch_tables.toml"
+          switch_table_file_path = "logs/teste_06/switch_tables.toml"
           EOF_TOML
           mkdir -p ppc_out
           XR=$(find xr_build -type f -name XenonRecomp -perm -u+x | head -n1)
           CTX=$(find XenonRecomp -name ppc_context.h | head -n1)
-          echo "XenonRecomp: $XR | ctx: $CTX"
           set +e
-          timeout 1500 "$XR" xr.toml "$CTX" > logs/teste_05/05_recomp.txt 2>&1
+          timeout 1500 "$XR" xr.toml "$CTX" > logs/teste_06/05_recomp.txt 2>&1
           echo "exit XenonRecomp: $?"
           set -e
-          tail -n 40 logs/teste_05/05_recomp.txt
-          echo "--- linhas com erro/aviso:"
-          grep -ciE "error|unable|invalid|unknown|unrecogni" logs/teste_05/05_recomp.txt || true
-          ls ppc_out | head -20
-          ls ppc_out | wc -l
-          du -sh ppc_out
-          cat ppc_out/*.cpp 2>/dev/null | wc -l
-          head -n 40 ppc_out/ppc_config.h 2>/dev/null || true
+          # fontes do recompilador, para eu escrever o patch das instrucoes
+          cp XenonRecomp/XenonRecomp/*.cpp XenonRecomp/XenonRecomp/*.h logs/teste_06/src/
+          cp -r XenonRecomp/XenonUtils logs/teste_06/src/XenonUtils
+          grep -rhoE 'PPC_INST_[A-Z0-9_]+' XenonRecomp --include=*.h --include=*.c --include=*.cpp | sort -u > logs/teste_06/instlist.txt
+          # amostras do codigo gerado
+          head -n 150 ppc_out/ppc_recomp.0.cpp > logs/teste_06/amostra_recomp0.txt
+          head -n 60 ppc_out/ppc_func_mapping.cpp > logs/teste_06/amostra_mapping.txt
+          ls -l ppc_out > logs/teste_06/lista_ppc_out.txt
+          grep -n -B3 -A8 "loc_826AE3B8" ppc_out/ppc_recomp.*.cpp 2>/dev/null | head -n 40 > logs/teste_06/ctx_eqv.txt || true
+          # procurando as funcoes auxiliares de salvar/restaurar registradores
+          grep -nE -B3 "r1\.u32 \+ -152.*r14|r14.*r1\.u32 \+ -152" ppc_out/ppc_recomp.*.cpp 2>/dev/null | head -n 40 > logs/teste_06/achar_gprlr.txt || true
+          grep -nE -B3 "r12\.u32 \+ -144" ppc_out/ppc_recomp.*.cpp 2>/dev/null | head -n 30 > logs/teste_06/achar_fpr.txt || true
+          # teste de compilacao de 2 arquivos gerados (x86, so para validar o C++ e medir tempo)
+          for n in 0 1; do
+            { time clang++ -std=c++20 -O1 -march=native -w -c ppc_out/ppc_recomp.$n.cpp -I ppc_out -I XenonRecomp/XenonUtils -I XenonRecomp/thirdparty/simde -o /dev/null ; } > logs/teste_06/compile_$n.txt 2>&1 || true
+            echo "=== compile $n"; head -n 25 logs/teste_06/compile_$n.txt; tail -n 5 logs/teste_06/compile_$n.txt
+          done
           EOF_CMD
-          bash logs/teste_05/00_comando.txt 2>&1 | tee logs/teste_05/01_saida.txt
+          bash logs/teste_06/00_comando.txt 2>&1 | tee logs/teste_06/01_saida.txt
 
       - name: Guardar logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-teste-05
+          name: logs-teste-06
           path: logs/
