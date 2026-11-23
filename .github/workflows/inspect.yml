@@ -13,29 +13,38 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Gerar C++ e listar importacoes
+      - name: Gerar C++, despejar imagem e anotar importacoes
         shell: bash
         run: |
-          mkdir -p logs/teste_08
-          cat > logs/teste_08/00_comando.txt <<'EOF_CMD'
+          mkdir -p logs/teste_09
+          cat > logs/teste_09/00_comando.txt <<'EOF_CMD'
           set -e
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang cmake ninja-build
           curl -sS -L --fail -o game.pkg "https://github.com/souza60029-wq/ngbc-ios-port/releases/download/v1.0/B26872135B74C4F9A63367A857857D22456064C258"
-          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_08/02_stfs.txt
+          python tools/stfs_extract.py game.pkg game_extracted > logs/teste_09/02_stfs.txt
           git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/hedge-dev/XenonRecomp.git > /dev/null 2>&1
-          python tools/patch_xenonrecomp.py XenonRecomp | tee logs/teste_08/06_patch.txt
-          cmake -S XenonRecomp -B xr_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ > logs/teste_08/03_cmake.txt 2>&1 || { tail -n 60 logs/teste_08/03_cmake.txt; exit 1; }
-          cmake --build xr_build -j4 > logs/teste_08/04_build.txt 2>&1 || { tail -n 60 logs/teste_08/04_build.txt; exit 1; }
+          python tools/patch_xenonrecomp.py XenonRecomp | tee logs/teste_09/06_patch.txt
+          python tools/patch_extras.py XenonRecomp | tee logs/teste_09/06b_patch_extras.txt
+          cmake -S XenonRecomp -B xr_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ > logs/teste_09/03_cmake.txt 2>&1 || { tail -n 60 logs/teste_09/03_cmake.txt; exit 1; }
+          cmake --build xr_build -j4 > logs/teste_09/04_build.txt 2>&1 || { tail -n 60 logs/teste_09/04_build.txt; exit 1; }
           XA=$(find xr_build -type f -name XenonAnalyse -perm -u+x | head -n1)
-          "$XA" game_extracted/default.xex logs/teste_08/switch_tables.toml
+          "$XA" game_extracted/default.xex logs/teste_09/switch_tables.toml
           XR=$(find xr_build -type f -name XenonRecomp -perm -u+x | head -n1)
           CTX=$(find XenonRecomp -name ppc_context.h | head -n1)
+          echo "=== XenonDump"
+          mkdir -p dump
+          DUMP=$(find xr_build -type f -name XenonDump -perm -u+x | head -n1)
+          "$DUMP" game_extracted/default.xex dump/img
+          cp dump/img_manifest.txt logs/teste_09/manifest.txt
+          ls -l dump
+          head -n 20 logs/teste_09/manifest.txt
+          grep -c '^symbol' logs/teste_09/manifest.txt || true
           cat > xr.toml <<'EOF_TOML'
           [main]
           file_path = "game_extracted/default.xex"
           out_directory_path = "ppc_out"
-          switch_table_file_path = "logs/teste_08/switch_tables.toml"
+          switch_table_file_path = "logs/teste_09/switch_tables.toml"
           savegprlr_14_address = 0x822AB790
           restgprlr_14_address = 0x822AB7E0
           savefpr_14_address = 0x822ABF00
@@ -44,30 +53,25 @@ jobs:
           restvmx_14_address = 0x822ADCD8
           EOF_TOML
           mkdir -p ppc_out
-          timeout 1500 "$XR" xr.toml "$CTX" > logs/teste_08/05_recomp.txt 2>&1
+          timeout 1500 "$XR" xr.toml "$CTX" > logs/teste_09/05_recomp.txt 2>&1
           ls ppc_out | wc -l
           du -sh ppc_out
-          echo "=== importacoes"
-          grep -ohE '__imp__[A-Za-z0-9_]+' ppc_out/ppc_recomp_shared.h ppc_out/ppc_func_mapping.cpp | grep -v '__imp__sub_' | sort -u > logs/teste_08/imports.txt || true
-          wc -l logs/teste_08/imports.txt
-          head -n 120 logs/teste_08/imports.txt
-          grep -ohE '\b(Nt|Vd|Xam|Ke|Rtl|Ex|Mm|Xe|Xma|Ob|Io|Hal|Kf|Xapi|Net|Xex)[A-Za-z0-9_]+' ppc_out/ppc_recomp_shared.h | sort -u > logs/teste_08/imports2.txt || true
-          wc -l logs/teste_08/imports2.txt
-          head -c 3000 ppc_out/ppc_recomp_shared.h > logs/teste_08/shared_head.txt
-          tail -c 2500 ppc_out/ppc_recomp_shared.h > logs/teste_08/shared_tail.txt
-          head -n 40 ppc_out/ppc_func_mapping.cpp > logs/teste_08/mapping_head.txt
-          echo "=== funcoes auxiliares de v64+"
-          grep -h -B3 -m2 "// stvx128 v64," ppc_out/ppc_recomp.*.cpp 2>/dev/null | head -n 24 > logs/teste_08/vmx64_save.txt || true
-          grep -h -B3 -m2 "// lvx128 v64," ppc_out/ppc_recomp.*.cpp 2>/dev/null | head -n 24 > logs/teste_08/vmx64_rest.txt || true
-          wc -l logs/teste_08/vmx64_save.txt logs/teste_08/vmx64_rest.txt
+          echo "=== como as importacoes aparecem no codigo gerado"
+          grep -h -m3 -B1 -A3 "__imp__NtClose" ppc_out/ppc_recomp_shared.h ppc_out/ppc_func_mapping.cpp > logs/teste_09/imp_decl.txt || true
+          grep -h -m6 "__imp__NtCreateFile\|__imp__NtClose" ppc_out/ppc_recomp.*.cpp 2>/dev/null | head -n 8 > logs/teste_09/imp_call.txt || true
+          head -n 20 logs/teste_09/imp_decl.txt
+          head -n 8 logs/teste_09/imp_call.txt
+          echo "=== cabecalho das funcoes de v64+"
+          grep -h -B2 -A3 -m4 "// li r11,-1024" ppc_out/ppc_recomp.*.cpp 2>/dev/null | head -n 40 > logs/teste_09/vmx64_hdr.txt || true
+          cat logs/teste_09/vmx64_hdr.txt
           EOF_CMD
-          bash logs/teste_08/00_comando.txt 2>&1 | tee logs/teste_08/01_saida.txt
+          bash logs/teste_09/00_comando.txt 2>&1 | tee logs/teste_09/01_saida.txt
 
       - name: Guardar logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-teste-08
+          name: logs-teste-09
           path: logs/
 
       - name: Guardar C++ gerado (para o job iOS)
@@ -92,19 +96,17 @@ jobs:
       - name: Compilar para iPhone (arm64, iOS 15)
         shell: bash
         run: |
-          mkdir -p logs/teste_08_ios obj
-          cat > logs/teste_08_ios/00_comando.txt <<'EOF_CMD'
+          mkdir -p logs/teste_09_ios obj
+          cat > logs/teste_09_ios/00_comando.txt <<'EOF_CMD'
           set -e
           export SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          echo "SDK: $SDK"
-          xcrun --sdk iphoneos clang++ --version | head -n 2
           echo "cpus: $(sysctl -n hw.ncpu)"
           cat > compile_one.sh <<'EOF_SH'
           #!/bin/bash
           f="$1"
           b=$(basename "$f" .cpp)
           s=$(date +%s)
-          if xcrun --sdk iphoneos clang++ -target arm64-apple-ios15.0 -isysroot "$SDK" -std=c++20 -O1 -w -I ppc_out -I XenonRecomp/XenonUtils -I XenonRecomp/thirdparty/simde -c "$f" -o "obj/$b.o" > "logs/teste_08_ios/cc_$b.txt" 2>&1; then
+          if xcrun --sdk iphoneos clang++ -target arm64-apple-ios15.0 -isysroot "$SDK" -std=c++20 -O1 -w -I ppc_out -I XenonRecomp/XenonUtils -I XenonRecomp/thirdparty/simde -c "$f" -o "obj/$b.o" > "logs/teste_09_ios/cc_$b.txt" 2>&1; then
             echo "OK $b $(( $(date +%s) - s ))s"
           else
             echo "FALHOU $b"
@@ -112,21 +114,21 @@ jobs:
           EOF_SH
           chmod +x compile_one.sh
           START=$(date +%s)
-          ls ppc_out/ppc_recomp.*.cpp ppc_out/ppc_func_mapping.cpp | xargs -P 4 -n 1 ./compile_one.sh | tee logs/teste_08_ios/resultados.txt
+          ls ppc_out/ppc_recomp.*.cpp ppc_out/ppc_func_mapping.cpp | xargs -P 4 -n 1 ./compile_one.sh | tee logs/teste_09_ios/resultados.txt
           echo "tempo total: $(( $(date +%s) - START ))s"
           ls obj/*.o | wc -l
           du -sh obj
-          echo "falhas: $(grep -c FALHOU logs/teste_08_ios/resultados.txt || true)"
-          for b in $(grep FALHOU logs/teste_08_ios/resultados.txt | head -n 3 | awk '{print $2}'); do
+          echo "falhas: $(grep -c FALHOU logs/teste_09_ios/resultados.txt || true)"
+          for b in $(grep FALHOU logs/teste_09_ios/resultados.txt | head -n 3 | awk '{print $2}'); do
             echo "=== erro em $b"
-            head -n 30 logs/teste_08_ios/cc_$b.txt
+            head -n 30 logs/teste_09_ios/cc_$b.txt
           done
           EOF_CMD
-          bash logs/teste_08_ios/00_comando.txt 2>&1 | tee logs/teste_08_ios/01_saida.txt
+          bash logs/teste_09_ios/00_comando.txt 2>&1 | tee logs/teste_09_ios/01_saida.txt
 
       - name: Guardar logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-teste-08-ios
+          name: logs-teste-09-ios
           path: logs/
