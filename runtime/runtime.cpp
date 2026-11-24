@@ -1,16 +1,11 @@
-// runtime v0 do port NGBC (Linux de teste e iOS).
-// Memoria do convidado (4 GB), tabela de funcoes, importacoes do kernel com trace.
-#include "ppc_recomp_shared.h"
+// runtime do port NGBC - nucleo: memoria do convidado, alocadores, trace, sinais, main.
+#include "ngbc.h"
 
 #include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <map>
 #include <mutex>
-#include <string>
 #include <vector>
 
 #include <pthread.h>
@@ -26,14 +21,10 @@
 #define NGBC_ENTRY sub_822C64A0
 #endif
 
-static uint8_t* g_base = nullptr;
+uint8_t* g_base = nullptr;
+std::string g_data_root = ".";
 
-// ---------------- acesso a memoria do convidado (big-endian) ----------------
-static inline uint32_t rd32(uint32_t a) { uint32_t v; memcpy(&v, g_base + a, 4); return __builtin_bswap32(v); }
-static inline void wr32(uint32_t a, uint32_t v) { v = __builtin_bswap32(v); memcpy(g_base + a, &v, 4); }
-static inline void wr64(uint32_t a, uint64_t v) { v = __builtin_bswap64(v); memcpy(g_base + a, &v, 8); }
-
-static void commit(uint32_t addr, uint64_t size)
+void commit(uint32_t addr, uint64_t size)
 {
     uint64_t a0 = addr & ~0xFFFull;
     uint64_t a1 = (uint64_t(addr) + size + 0xFFF) & ~0xFFFull;
@@ -46,13 +37,13 @@ static void commit(uint32_t addr, uint64_t size)
 
 // ---------------- alocadores simples ----------------
 static std::mutex g_alloc_mu;
-static uint64_t g_heap_next = 0x40000000ull;   // memoria virtual
-static uint64_t g_phys_next = 0xA0000000ull;   // memoria fisica (GPU, audio)
-static uint64_t g_stack_next = 0x70000000ull;  // pilhas de threads
+static uint64_t g_heap_next = 0x40000000ull;
+static uint64_t g_phys_next = 0xA0000000ull;
+static uint64_t g_stack_next = 0x70000000ull;
 
 static uint32_t align_up(uint64_t v, uint64_t a) { return uint32_t((v + a - 1) & ~(a - 1)); }
 
-static uint32_t guest_alloc(uint64_t size, uint64_t align = 0x1000)
+uint32_t guest_alloc(uint64_t size, uint64_t align)
 {
     std::lock_guard<std::mutex> l(g_alloc_mu);
     uint32_t a = align_up(g_heap_next, align);
@@ -61,7 +52,7 @@ static uint32_t guest_alloc(uint64_t size, uint64_t align = 0x1000)
     return a;
 }
 
-static uint32_t guest_alloc_phys(uint64_t size, uint64_t align)
+uint32_t guest_alloc_phys(uint64_t size, uint64_t align)
 {
     std::lock_guard<std::mutex> l(g_alloc_mu);
     if (align < 0x1000) align = 0x1000;
@@ -71,7 +62,7 @@ static uint32_t guest_alloc_phys(uint64_t size, uint64_t align)
     return a;
 }
 
-static uint32_t guest_alloc_stack(uint64_t size)
+uint32_t guest_alloc_stack(uint64_t size)
 {
     std::lock_guard<std::mutex> l(g_alloc_mu);
     uint32_t a = align_up(g_stack_next, 0x10000);
@@ -101,7 +92,7 @@ void trace_import(const char* name, PPCContext& ctx)
         g_ring[g_total % 40] = buf;
 }
 
-static void print_summary(const char* motivo)
+void ngbc_print_summary(const char* motivo)
 {
     std::lock_guard<std::mutex> l(g_trace_mu);
     fprintf(stderr, "\n===== resumo (%s) =====\nchamadas de importacao: %llu\n", motivo, (unsigned long long)g_total);
@@ -115,76 +106,11 @@ static void print_summary(const char* motivo)
     fflush(stderr);
 }
 
-#define KTRACE(n) trace_import(#n, ctx)
-
-// ---------------- importacoes com comportamento real ----------------
-PPC_FUNC(__imp__NtAllocateVirtualMemory)
-{
-    KTRACE(NtAllocateVirtualMemory);
-    uint32_t pbase = ctx.r3.u32, psize = ctx.r4.u32;
-    uint32_t want = rd32(pbase), size = rd32(psize);
-    uint32_t addr = want ? want : guest_alloc(size ? size : 0x1000, 0x10000);
-    if (want) commit(want, size ? size : 0x1000);
-    wr32(pbase, addr);
-    wr32(psize, align_up(size, 0x1000));
-    ctx.r3.u64 = 0;
-}
-
-PPC_FUNC(__imp__NtFreeVirtualMemory) { KTRACE(NtFreeVirtualMemory); ctx.r3.u64 = 0; }
-
-PPC_FUNC(__imp__MmAllocatePhysicalMemoryEx)
-{
-    KTRACE(MmAllocatePhysicalMemoryEx);
-    ctx.r3.u64 = guest_alloc_phys(ctx.r4.u32, ctx.r8.u32);
-}
-
-PPC_FUNC(__imp__MmFreePhysicalMemory) { KTRACE(MmFreePhysicalMemory); }
-PPC_FUNC(__imp__MmGetPhysicalAddress) { KTRACE(MmGetPhysicalAddress); ctx.r3.u64 = ctx.r3.u32 & 0x1FFFFFFFu; }
-
-PPC_FUNC(__imp__XamAlloc)
-{
-    KTRACE(XamAlloc);
-    wr32(ctx.r5.u32, guest_alloc(ctx.r4.u32 ? ctx.r4.u32 : 0x10, 0x10));
-    ctx.r3.u64 = 0;
-}
-PPC_FUNC(__imp__XamFree) { KTRACE(XamFree); ctx.r3.u64 = 0; }
-
-PPC_FUNC(__imp__ExAllocatePoolTypeWithTag) { KTRACE(ExAllocatePoolTypeWithTag); ctx.r3.u64 = guest_alloc(ctx.r3.u32 ? ctx.r3.u32 : 0x10, 0x10); }
-PPC_FUNC(__imp__ExAllocatePoolWithTag) { KTRACE(ExAllocatePoolWithTag); ctx.r3.u64 = guest_alloc(ctx.r3.u32 ? ctx.r3.u32 : 0x10, 0x10); }
-PPC_FUNC(__imp__ExFreePool) { KTRACE(ExFreePool); }
-
-static thread_local uint32_t t_tls[64];
-static std::atomic<uint32_t> g_tls_next{0};
-PPC_FUNC(__imp__KeTlsAlloc) { KTRACE(KeTlsAlloc); ctx.r3.u64 = g_tls_next++ % 64; }
-PPC_FUNC(__imp__KeTlsFree) { KTRACE(KeTlsFree); ctx.r3.u64 = 1; }
-PPC_FUNC(__imp__KeTlsGetValue) { KTRACE(KeTlsGetValue); ctx.r3.u64 = t_tls[ctx.r3.u32 % 64]; }
-PPC_FUNC(__imp__KeTlsSetValue) { KTRACE(KeTlsSetValue); t_tls[ctx.r3.u32 % 64] = ctx.r4.u32; ctx.r3.u64 = 1; }
-
-PPC_FUNC(__imp__KeQueryPerformanceFrequency) { KTRACE(KeQueryPerformanceFrequency); ctx.r3.u64 = 50000000ull; }
-PPC_FUNC(__imp__KeQuerySystemTime)
-{
-    KTRACE(KeQuerySystemTime);
-    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
-    uint64_t ft = (uint64_t(ts.tv_sec) + 11644473600ull) * 10000000ull + ts.tv_nsec / 100;
-    wr64(ctx.r3.u32, ft);
-}
-PPC_FUNC(__imp__KeGetCurrentProcessType) { KTRACE(KeGetCurrentProcessType); ctx.r3.u64 = 1; }
-PPC_FUNC(__imp__KeDelayExecutionThread) { KTRACE(KeDelayExecutionThread); usleep(1000); ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__RtlTryEnterCriticalSection) { KTRACE(RtlTryEnterCriticalSection); ctx.r3.u64 = 1; }
-PPC_FUNC(__imp__XGetLanguage) { KTRACE(XGetLanguage); ctx.r3.u64 = 1; }
-
-PPC_FUNC(__imp__HalReturnToFirmware)
-{
-    KTRACE(HalReturnToFirmware);
-    print_summary("HalReturnToFirmware");
-    _exit(0);
-}
-
 // ---------------- chamada indireta nao resolvida ----------------
 PPC_FUNC(ngbc_unresolved)
 {
     fprintf(stderr, "[!] chamada indireta nao resolvida: ctr=%08X lr=%08X\n", ctx.ctr.u32, (uint32_t)ctx.lr);
-    print_summary("chamada indireta nao resolvida");
+    ngbc_print_summary("chamada indireta nao resolvida");
     _exit(3);
 }
 
@@ -201,46 +127,23 @@ static void on_segv(int sig, siginfo_t* si, void*)
     int n = backtrace(bt, 40);
     backtrace_symbols_fd(bt, n, 2);
 #endif
-    print_summary("falha de segmentacao");
+    ngbc_print_summary("falha de segmentacao");
     _exit(2);
 }
 
-// ---------------- thread principal do convidado ----------------
-struct GuestStart { uint32_t stack_top; uint32_t stack_bottom; };
-
-static void* guest_main(void* p)
+static void entry_thread(PPCContext& ctx, uint8_t* base)
 {
-    auto* gs = (GuestStart*)p;
-    uint32_t pcr = guest_alloc(0x2000, 0x1000);
-    uint32_t tlsb = guest_alloc(0x10000, 0x1000);
-    uint32_t thr = guest_alloc(0x1000, 0x1000);
-    wr32(pcr + 0x00, tlsb);
-    wr32(pcr + 0x30, pcr);
-    wr32(pcr + 0x70, gs->stack_top);
-    wr32(pcr + 0x74, gs->stack_bottom);
-    wr32(pcr + 0x100, thr);
-
-    PPCContext ctx{};
-    ctx.fpscr.loadFromHost();
-    ctx.r1.u64 = gs->stack_top - 0x100;
-    ctx.r13.u64 = pcr;
-    fprintf(stderr, "[runtime] iniciando o jogo: entrada %s, pilha 0x%08X, PCR 0x%08X\n", PPC_STRINGIFY(NGBC_ENTRY), gs->stack_top, pcr);
-    NGBC_ENTRY(ctx, g_base);
+    fprintf(stderr, "[runtime] iniciando o jogo: entrada %s\n", PPC_STRINGIFY(NGBC_ENTRY));
+    NGBC_ENTRY(ctx, base);
     fprintf(stderr, "[runtime] a funcao de entrada retornou r3=%08X\n", ctx.r3.u32);
-    print_summary("entrada retornou");
+    ngbc_print_summary("entrada retornou");
     _exit(0);
-    return nullptr;
 }
 
-int main(int argc, char** argv)
+// Inicia o jogo. seconds > 0: encerra apos esse tempo (modo de teste). seconds == 0: roda para sempre (app).
+int ngbc_run(const char* image_path, const char* data_root, int seconds)
 {
-    if (argc < 2)
-    {
-        fprintf(stderr, "uso: ngbc_host imagem.bin [segundos]\n");
-        return 1;
-    }
-    int seconds = argc > 2 ? atoi(argv[2]) : 20;
-
+    g_data_root = data_root ? data_root : ".";
     const uint64_t kSize = 0x100000000ull;
     void* m = mmap(nullptr, kSize, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
     if (m == MAP_FAILED)
@@ -251,15 +154,13 @@ int main(int argc, char** argv)
     g_base = (uint8_t*)m;
     fprintf(stderr, "[runtime] memoria do convidado reservada em %p\n", (void*)g_base);
 
-    // imagem do jogo
     commit(PPC_IMAGE_BASE, PPC_IMAGE_SIZE);
-    FILE* f = fopen(argv[1], "rb");
-    if (!f) { fprintf(stderr, "[!] nao abri %s\n", argv[1]); return 12; }
+    FILE* f = fopen(image_path, "rb");
+    if (!f) { fprintf(stderr, "[!] nao abri %s\n", image_path); return 12; }
     size_t got = fread(g_base + PPC_IMAGE_BASE, 1, PPC_IMAGE_SIZE, f);
     fclose(f);
-    fprintf(stderr, "[runtime] imagem carregada: %zu bytes\n", got);
+    fprintf(stderr, "[runtime] imagem carregada: %zu bytes; arquivos do jogo em %s\n", got, g_data_root.c_str());
 
-    // tabela de funcoes (logo apos a imagem)
     commit(PPC_IMAGE_BASE + PPC_IMAGE_SIZE, PPC_CODE_SIZE * 2 + 16);
     for (uint64_t a = PPC_CODE_BASE; a < PPC_CODE_BASE + PPC_CODE_SIZE; a += 4)
         PPC_LOOKUP_FUNC(g_base, a) = ngbc_unresolved;
@@ -276,20 +177,27 @@ int main(int argc, char** argv)
     sigaction(SIGILL, &sa, nullptr);
     sigaction(SIGFPE, &sa, nullptr);
 
-    // pilha do convidado
-    static GuestStart gs;
-    const uint32_t stackSize = 0x100000;
-    gs.stack_bottom = guest_alloc_stack(stackSize);
-    gs.stack_top = gs.stack_bottom + stackSize;
+    kernel_spawn_main(entry_thread);
 
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 64 * 1024 * 1024);
-    pthread_t th;
-    pthread_create(&th, &attr, guest_main, &gs);
-
-    struct timespec ts{ seconds, 0 };
-    nanosleep(&ts, nullptr);
-    print_summary("tempo esgotado");
-    _exit(0);
+    if (seconds > 0)
+    {
+        struct timespec ts{ seconds, 0 };
+        nanosleep(&ts, nullptr);
+        ngbc_print_summary("tempo esgotado");
+        _exit(0);
+    }
+    for (;;) sleep(3600);
+    return 0;
 }
+
+#ifdef NGBC_HOST
+int main(int argc, char** argv)
+{
+    if (argc < 3)
+    {
+        fprintf(stderr, "uso: ngbc_host imagem.bin pasta_do_jogo [segundos]\n");
+        return 1;
+    }
+    return ngbc_run(argv[1], argv[2], argc > 3 ? atoi(argv[3]) : 20);
+}
+#endif
