@@ -43,6 +43,10 @@ export ENTRY
 echo "entrada: $ENTRY"
 grep -ohE '__imp__[A-Za-z0-9_]+' ppc_out/ppc_recomp_shared.h ppc_out/ppc_func_mapping.cpp | grep -v '__imp__sub_' | sort -u > "$L/imports.txt"
 python tools/gen_stubs.py "$L/imports.txt" ppc_out/stubs_gen.cpp
+for fn in _xstart sub_822CB918 sub_822CB840; do
+  F=$(grep -l "PPC_FUNC_IMPL(__imp__$fn)" ppc_out/ppc_recomp.*.cpp | head -n1 || true)
+  [ -n "$F" ] && awk -v f="PPC_FUNC_IMPL(__imp__$fn)" 'index($0,f){p=1} p{print} p&&/^}/{exit}' "$F" | head -n 220 > "$L/src_$fn.txt" || true
+done
 if [ -n "$ONLY_GEN" ]; then echo "so gerar: pronto"; exit 0; fi
 mkdir -p obj
 cat > compile_one.sh <<'EOF_SH'
