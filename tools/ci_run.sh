@@ -36,6 +36,16 @@ EOF_TOML
 mkdir -p ppc_out
 timeout 1500 "$XR" xr.toml "$CTX" > "$L/05_recomp.txt" 2>&1
 tr '\r' '\n' < "$L/05_recomp.txt" | grep -v '^[[:space:]]*$' | tail -n 4
+cp dump/img_manifest.txt "$L/manifest.txt"
+python tools/find_funcs.py dump/img_image.bin "$L/manifest.txt" ppc_out tools/extra_funcs.txt > "$L/funcs.toml" 2> "$L/funcs_stats.txt" || true
+cat "$L/funcs_stats.txt"
+if [ -s "$L/funcs.toml" ]; then
+  cat "$L/funcs.toml" >> xr.toml
+  rm -rf ppc_out
+  mkdir -p ppc_out
+  timeout 1500 "$XR" xr.toml "$CTX" > "$L/05b_recomp.txt" 2>&1
+  tr '\r' '\n' < "$L/05b_recomp.txt" | grep -v '^[[:space:]]*$' | tail -n 3
+fi
 # a funcao de entrada se chama _xstart quando o recompilador reconhece o ponto de entrada
 if grep -q 'PPC_EXTERN_FUNC(_xstart)' ppc_out/ppc_recomp_shared.h; then ENTRY=_xstart; else ENTRY=sub_822C64A0; fi
 echo "$ENTRY" > ppc_out/entry.txt
