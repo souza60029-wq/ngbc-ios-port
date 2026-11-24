@@ -26,15 +26,33 @@ uint8_t* g_base = nullptr;
 std::string g_data_root = ".";
 
 static bool g_sparse = false;   // modo esparso: so as janelas necessarias sao reservadas
+static struct Win { uint64_t lo, size; } g_win[] = {
+    { 0x40000000ull, 0x0C000000ull },   // heap do convidado (192 MB)
+    { 0x70000000ull, 0x04000000ull },   // pilhas das threads (64 MB)
+    { 0x82000000ull, 0x02000000ull },   // imagem do jogo + tabela de funcoes (32 MB)
+    { 0xA0000000ull, 0x08000000ull } }; // memoria fisica (128 MB)
+
+static bool in_window(uint64_t a0, uint64_t a1)
+{
+    for (auto& w : g_win) if (a0 >= w.lo && a1 <= w.lo + w.size) return true;
+    return false;
+}
 
 void commit(uint32_t addr, uint64_t size)
 {
     uint64_t pg = (uint64_t)getpagesize();   // 4 KB no Linux, 16 KB no iPhone 6s
     uint64_t a0 = addr & ~(pg - 1);
     uint64_t a1 = (uint64_t(addr) + size + pg - 1) & ~(pg - 1);
-    void* p = g_sparse
-        ? mmap(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0)
-        : (mprotect(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE) == 0 ? g_base + a0 : MAP_FAILED);
+    void* p;
+    if (!g_sparse)
+        p = mprotect(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE) == 0 ? g_base + a0 : MAP_FAILED;
+    else if (in_window(a0, a1))
+        p = mmap(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+    else
+    {
+        p = mmap(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);   // sem FIXED: nao pisa em nada
+        if (p != MAP_FAILED && p != (void*)(g_base + a0)) { munmap(p, a1 - a0); p = MAP_FAILED; errno = EEXIST; }
+    }
     if (p == MAP_FAILED)
     {
         fprintf(stderr, "[!] commit falhou: guest 0x%llX tam 0x%llX (%s)\n", (unsigned long long)a0, (unsigned long long)(a1 - a0), strerror(errno));
@@ -166,6 +184,7 @@ int ngbc_run(const char* image_path, const char* data_root, int seconds)
     g_data_root = data_root ? data_root : ".";
     const uint64_t kSize = 0x100000000ull;
     void* m = getenv("NGBC_SPARSE") ? MAP_FAILED : mmap(nullptr, kSize, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (m == MAP_FAILED && !getenv("NGBC_SPARSE")) m = mmap(nullptr, kSize, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (m != MAP_FAILED)
     {
         g_base = (uint8_t*)m;
@@ -173,28 +192,31 @@ int ngbc_run(const char* image_path, const char* data_root, int seconds)
     }
     else
     {
-        fprintf(stderr, "[runtime] reservar 4 GB falhou (%s); usando janelas esparsas (tamanho de pagina %d)\n", strerror(errno), getpagesize());
-        // janelas: heap, pilhas, imagem+tabela, memoria fisica
-        const struct { uint64_t lo, size; } win[] = {
-            { 0x40000000ull, 0x10000000ull }, { 0x70000000ull, 0x08000000ull },
-            { 0x82000000ull, 0x02000000ull }, { 0xA0000000ull, 0x08000000ull } };
-        const uint64_t bases[] = { 0x2000000000ull, 0x3000000000ull, 0x4000000000ull, 0x5000000000ull };
-        bool ok = false;
-        for (uint64_t b : bases)
+        fprintf(stderr, "[runtime] reservar 4 GB falhou (%s); tamanho de pagina %d\n", strerror(errno), getpagesize());
+        static const uint64_t sizes[] = { 0xE0000000ull, 0xC0000000ull, 0x80000000ull, 0x40000000ull, 0x20000000ull, 0x10000000ull, 0x04000000ull };
+        for (uint64_t s : sizes)   // sonda: quanto o sistema deixa reservar de uma vez?
         {
-            size_t done = 0;
-            for (; done < 4; done++)
+            void* p = mmap(nullptr, s, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            fprintf(stderr, "[sonda] %5llu MB: %s\n", (unsigned long long)(s >> 20), p == MAP_FAILED ? strerror(errno) : "ok");
+            if (p != MAP_FAILED) munmap(p, s);
+        }
+        // janelas esparsas: a base fica em multiplos de 4 GB, dentro do limite de ~63 GB do usuario no iOS
+        bool ok = false;
+        for (uint64_t b = 0x100000000ull; b <= 0xE00000000ull && !ok; b += 0x100000000ull)
+        {
+            size_t done = 0, n = sizeof(g_win) / sizeof(g_win[0]);
+            for (; done < n; done++)
             {
-                void* want = (void*)(b + win[done].lo);
-                void* got = mmap(want, win[done].size, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+                void* want = (void*)(b + g_win[done].lo);
+                void* got = mmap(want, g_win[done].size, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
                 if (got != want)
                 {
-                    if (got != MAP_FAILED) munmap(got, win[done].size);
+                    if (got != MAP_FAILED) munmap(got, g_win[done].size);
                     break;
                 }
             }
-            if (done == 4) { g_base = (uint8_t*)b; ok = true; break; }
-            for (size_t i = 0; i < done; i++) munmap((void*)(b + win[i].lo), win[i].size);
+            if (done == n) { g_base = (uint8_t*)b; ok = true; }
+            else for (size_t i = 0; i < done; i++) munmap((void*)(b + g_win[i].lo), g_win[i].size);
         }
         if (!ok)
         {
