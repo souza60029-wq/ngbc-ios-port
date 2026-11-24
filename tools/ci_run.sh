@@ -1,5 +1,5 @@
 #!/bin/bash
-# uso: bash tools/ci_run.sh <numero_do_teste>
+# uso: bash tools/ci_run.sh <numero_do_teste>      (ONLY_GEN=1 para so gerar o C++)
 set -e
 N="$1"; L="logs/teste_$N"; mkdir -p "$L"
 cp tools/ci_run.sh "$L/00_comando.txt"
@@ -32,23 +32,27 @@ savevmx_14_address = 0x822ADA40
 restvmx_14_address = 0x822ADCD8
 savevmx_64_address = 0x822ADAD4
 restvmx_64_address = 0x822ADD6C
-functions = [ { address = 0x822C64A0, size = 0xB00 } ]
 EOF_TOML
 mkdir -p ppc_out
 timeout 1500 "$XR" xr.toml "$CTX" > "$L/05_recomp.txt" 2>&1
-tr '\r' '\n' < "$L/05_recomp.txt" | grep -v '^[[:space:]]*$' | tail -n 6
-echo "entrada declarada: $(grep -c 'PPC_EXTERN_FUNC(sub_822C64A0)' ppc_out/ppc_recomp_shared.h)"
+tr '\r' '\n' < "$L/05_recomp.txt" | grep -v '^[[:space:]]*$' | tail -n 4
+# a funcao de entrada se chama _xstart quando o recompilador reconhece o ponto de entrada
+if grep -q 'PPC_EXTERN_FUNC(_xstart)' ppc_out/ppc_recomp_shared.h; then ENTRY=_xstart; else ENTRY=sub_822C64A0; fi
+echo "$ENTRY" > ppc_out/entry.txt
+export ENTRY
+echo "entrada: $ENTRY"
 grep -ohE '__imp__[A-Za-z0-9_]+' ppc_out/ppc_recomp_shared.h ppc_out/ppc_func_mapping.cpp | grep -v '__imp__sub_' | sort -u > "$L/imports.txt"
 python tools/gen_stubs.py "$L/imports.txt" ppc_out/stubs_gen.cpp
+if [ -n "$ONLY_GEN" ]; then echo "so gerar: pronto"; exit 0; fi
 mkdir -p obj
 cat > compile_one.sh <<'EOF_SH'
 #!/bin/bash
 f="$1"; b=$(basename "$f" .cpp)
-if clang++ -std=c++20 -O1 -w -march=native -I ppc_out -I XenonRecomp/XenonUtils -I XenonRecomp/thirdparty/simde -c "$f" -o "obj/$b.o" > "$L/cc_$b.txt" 2>&1; then echo "OK $b"; else echo "FALHOU $b"; fi
+if clang++ -std=c++20 -O1 -w -march=native -DNGBC_HOST -DNGBC_ENTRY=$ENTRY -I ppc_out -I XenonRecomp/XenonUtils -I XenonRecomp/thirdparty/simde -c "$f" -o "obj/$b.o" > "$L/cc_$b.txt" 2>&1; then echo "OK $b"; else echo "FALHOU $b"; fi
 EOF_SH
 chmod +x compile_one.sh
 export L
-ls ppc_out/ppc_recomp.*.cpp ppc_out/ppc_func_mapping.cpp ppc_out/stubs_gen.cpp runtime/runtime.cpp | xargs -P 4 -n 1 ./compile_one.sh > "$L/compilacao.txt"
+ls ppc_out/ppc_recomp.*.cpp ppc_out/ppc_func_mapping.cpp ppc_out/stubs_gen.cpp runtime/runtime.cpp runtime/kernel.cpp | xargs -P 4 -n 1 ./compile_one.sh > "$L/compilacao.txt"
 echo "compilados: $(grep -c '^OK' "$L/compilacao.txt")  falhas: $(grep -c FALHOU "$L/compilacao.txt" || true)"
 for b in $(grep FALHOU "$L/compilacao.txt" | head -n 3 | awk '{print $2}'); do echo "=== erro em $b"; head -n 30 "$L/cc_$b.txt"; done
 set +e
@@ -73,7 +77,7 @@ fi
 ls -l ngbc_host
 echo "=== rodando o jogo (25 s)"
 set +e
-timeout 90 ./ngbc_host dump/img_image.bin 25 > "$L/run_stdout.txt" 2> "$L/run.txt"
+timeout 90 ./ngbc_host dump/img_image.bin game_extracted 25 > "$L/run_stdout.txt" 2> "$L/run.txt"
 echo "saida do jogo: $?"
 set -e
 head -n 150 "$L/run.txt"
