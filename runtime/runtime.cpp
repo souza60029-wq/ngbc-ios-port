@@ -2,6 +2,7 @@
 #include "ngbc.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -24,13 +25,19 @@
 uint8_t* g_base = nullptr;
 std::string g_data_root = ".";
 
+static bool g_sparse = false;   // modo esparso: so as janelas necessarias sao reservadas
+
 void commit(uint32_t addr, uint64_t size)
 {
-    uint64_t a0 = addr & ~0xFFFull;
-    uint64_t a1 = (uint64_t(addr) + size + 0xFFF) & ~0xFFFull;
-    if (mprotect(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE) != 0)
+    uint64_t pg = (uint64_t)getpagesize();   // 4 KB no Linux, 16 KB no iPhone 6s
+    uint64_t a0 = addr & ~(pg - 1);
+    uint64_t a1 = (uint64_t(addr) + size + pg - 1) & ~(pg - 1);
+    void* p = g_sparse
+        ? mmap(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0)
+        : (mprotect(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE) == 0 ? g_base + a0 : MAP_FAILED);
+    if (p == MAP_FAILED)
     {
-        fprintf(stderr, "[!] mprotect falhou: guest 0x%llX tam 0x%llX\n", (unsigned long long)a0, (unsigned long long)(a1 - a0));
+        fprintf(stderr, "[!] commit falhou: guest 0x%llX tam 0x%llX (%s)\n", (unsigned long long)a0, (unsigned long long)(a1 - a0), strerror(errno));
         _exit(10);
     }
 }
@@ -118,6 +125,19 @@ PPC_FUNC(ngbc_unresolved)
 static void on_segv(int sig, siginfo_t* si, void*)
 {
     uintptr_t a = (uintptr_t)si->si_addr;
+    if (g_base && a >= (uintptr_t)g_base && a < (uintptr_t)g_base + 0x100000000ull)
+    {
+        uint32_t ga = (uint32_t)(a - (uintptr_t)g_base);
+        static uint32_t last = 0xFFFFFFFF; static int repeat = 0; static int logged = 0;
+        repeat = (ga == last) ? repeat + 1 : 0;
+        last = ga;
+        if (ga >= 0x10000 && repeat < 3)       // acesso a memoria ainda nao mapeada: mapeia 64 KB e tenta de novo
+        {
+            if (logged++ < 40) fprintf(stderr, "[mem] pagina do convidado 0x%08X mapeada sob demanda\n", ga & ~0xFFFFu);
+            commit(ga & ~0xFFFFu, 0x10000);
+            return;
+        }
+    }
     fprintf(stderr, "\n[!] SIGNAL %d em %p", sig, si->si_addr);
     if (g_base && a >= (uintptr_t)g_base && a < (uintptr_t)g_base + 0x100000000ull)
         fprintf(stderr, " (endereco do convidado 0x%08X)", (uint32_t)(a - (uintptr_t)g_base));
@@ -145,14 +165,45 @@ int ngbc_run(const char* image_path, const char* data_root, int seconds)
 {
     g_data_root = data_root ? data_root : ".";
     const uint64_t kSize = 0x100000000ull;
-    void* m = mmap(nullptr, kSize, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
-    if (m == MAP_FAILED)
+    void* m = getenv("NGBC_SPARSE") ? MAP_FAILED : mmap(nullptr, kSize, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (m != MAP_FAILED)
     {
-        fprintf(stderr, "[!] nao consegui reservar 4 GB de enderecos\n");
-        return 11;
+        g_base = (uint8_t*)m;
+        fprintf(stderr, "[runtime] memoria do convidado: 4 GB de enderecos reservados em %p (tamanho de pagina %d)\n", (void*)g_base, getpagesize());
     }
-    g_base = (uint8_t*)m;
-    fprintf(stderr, "[runtime] memoria do convidado reservada em %p\n", (void*)g_base);
+    else
+    {
+        fprintf(stderr, "[runtime] reservar 4 GB falhou (%s); usando janelas esparsas (tamanho de pagina %d)\n", strerror(errno), getpagesize());
+        // janelas: heap, pilhas, imagem+tabela, memoria fisica
+        const struct { uint64_t lo, size; } win[] = {
+            { 0x40000000ull, 0x10000000ull }, { 0x70000000ull, 0x08000000ull },
+            { 0x82000000ull, 0x02000000ull }, { 0xA0000000ull, 0x08000000ull } };
+        const uint64_t bases[] = { 0x2000000000ull, 0x3000000000ull, 0x4000000000ull, 0x5000000000ull };
+        bool ok = false;
+        for (uint64_t b : bases)
+        {
+            size_t done = 0;
+            for (; done < 4; done++)
+            {
+                void* want = (void*)(b + win[done].lo);
+                void* got = mmap(want, win[done].size, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+                if (got != want)
+                {
+                    if (got != MAP_FAILED) munmap(got, win[done].size);
+                    break;
+                }
+            }
+            if (done == 4) { g_base = (uint8_t*)b; ok = true; break; }
+            for (size_t i = 0; i < done; i++) munmap((void*)(b + win[i].lo), win[i].size);
+        }
+        if (!ok)
+        {
+            fprintf(stderr, "[!] nao consegui reservar nem as janelas esparsas (%s)\n", strerror(errno));
+            return 11;
+        }
+        g_sparse = true;
+        fprintf(stderr, "[runtime] modo esparso: base %p\n", (void*)g_base);
+    }
 
     commit(PPC_IMAGE_BASE, PPC_IMAGE_SIZE);
     FILE* f = fopen(image_path, "rb");
