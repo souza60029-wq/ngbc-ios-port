@@ -1,0 +1,2 @@
+# enderecos de funcoes do jogo nao descobertas pelo recompilador (um em hexadecimal por linha)
+821F7B7C
