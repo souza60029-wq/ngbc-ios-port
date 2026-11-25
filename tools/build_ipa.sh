@@ -14,7 +14,7 @@ if xcrun --sdk iphoneos clang++ -target arm64-apple-ios15.0 -isysroot "$SDK" -st
 EOF_SH
 chmod +x compile_one.sh
 export SDK ENTRY
-ls ppc_out/ppc_recomp.*.cpp ppc_out/ppc_func_mapping.cpp ppc_out/stubs_gen.cpp runtime/runtime.cpp runtime/kernel.cpp | xargs -P 4 -n 1 ./compile_one.sh | tee logs/compilacao.txt
+ls ppc_out/ppc_recomp.*.cpp ppc_out/ppc_func_mapping.cpp ppc_out/stubs_gen.cpp runtime/*.cpp | xargs -P 4 -n 1 ./compile_one.sh | tee logs/compilacao.txt
 if grep -q FALHOU logs/compilacao.txt; then
   for b in $(grep FALHOU logs/compilacao.txt | head -n 3 | awk '{print $2}'); do echo "=== erro em $b"; head -n 30 "logs/cc_$b.txt"; done
   exit 1
