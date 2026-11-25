@@ -594,3 +594,7 @@ PPC_FUNC(__imp__RtlInitUnicodeString)
     wr16(ctx.r3.u32 + 2, (uint16_t)(src ? n * 2 + 2 : 0));
     wr32(ctx.r3.u32 + 4, src);
 }
+void kernel_spawn_thread(std::function<void(PPCContext&, uint8_t*)> body)
+{
+    spawn(nullptr, std::move(body), 0x100000, true);
+}
