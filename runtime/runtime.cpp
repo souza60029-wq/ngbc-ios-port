@@ -25,6 +25,12 @@
 uint8_t* g_base = nullptr;
 std::string g_data_root = ".";
 
+#if defined(__APPLE__)
+typedef char mincore_t;
+#else
+typedef unsigned char mincore_t;
+#endif
+
 static bool g_sparse = false;   // modo esparso: so as janelas necessarias sao reservadas
 static struct Win { uint64_t lo, size; } g_win[] = {
     { 0x40000000ull, 0x0C000000ull },   // heap do convidado (192 MB)
@@ -51,7 +57,12 @@ void commit(uint32_t addr, uint64_t size)
     else
     {
         p = mmap(g_base + a0, a1 - a0, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);   // sem FIXED: nao pisa em nada
-        if (p != MAP_FAILED && p != (void*)(g_base + a0)) { munmap(p, a1 - a0); p = MAP_FAILED; errno = EEXIST; }
+        if (p != MAP_FAILED && p != (void*)(g_base + a0))
+        {
+            munmap(p, a1 - a0); p = MAP_FAILED; errno = EEXIST;
+            mincore_t vec[256];   // outra thread pode ter mapeado a mesma pagina agora mesmo: entao esta tudo certo
+            if ((a1 - a0) / pg <= 256 && mincore(g_base + a0, a1 - a0, vec) == 0) p = g_base + a0;
+        }
     }
     if (p == MAP_FAILED)
     {
@@ -63,7 +74,7 @@ void commit(uint32_t addr, uint64_t size)
 // ---------------- alocadores simples ----------------
 static std::mutex g_alloc_mu;
 static uint64_t g_heap_next = 0x40000000ull;
-static uint64_t g_phys_next = 0xA0000000ull;
+static uint64_t g_phys_next = 0xA0010000ull;   // pula os primeiros 64 KB: fisico 0 seria tratado como nulo
 static uint64_t g_stack_next = 0x70000000ull;
 
 static uint32_t align_up(uint64_t v, uint64_t a) { return uint32_t((v + a - 1) & ~(a - 1)); }
@@ -193,12 +204,29 @@ int ngbc_run(const char* image_path, const char* data_root, int seconds)
     else
     {
         fprintf(stderr, "[runtime] reservar 4 GB falhou (%s); tamanho de pagina %d\n", strerror(errno), getpagesize());
-        static const uint64_t sizes[] = { 0xE0000000ull, 0xC0000000ull, 0x80000000ull, 0x40000000ull, 0x20000000ull, 0x10000000ull, 0x04000000ull };
+        static const uint64_t sizes[] = { 0xC0000000ull, 0x80000000ull, 0x60000000ull, 0x50000000ull, 0x40000000ull, 0x20000000ull, 0x10000000ull };
         for (uint64_t s : sizes)   // sonda: quanto o sistema deixa reservar de uma vez?
         {
             void* p = mmap(nullptr, s, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
             fprintf(stderr, "[sonda] %5llu MB: %s\n", (unsigned long long)(s >> 20), p == MAP_FAILED ? strerror(errno) : "ok");
             if (p != MAP_FAILED) munmap(p, s);
+        }
+        {   // sonda 2: quantos blocos de 256 MB cabem no total?
+            std::vector<void*> blocks;
+            for (int i = 0; i < 64; i++)
+            {
+                void* p = mmap(nullptr, 0x10000000ull, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+                if (p == MAP_FAILED) break;
+                blocks.push_back(p);
+            }
+            fprintf(stderr, "[sonda] blocos de 256 MB acumulados: %zu (%zu MB)\n", blocks.size(), blocks.size() * 256);
+            for (void* p : blocks) munmap(p, 0x10000000ull);
+        }
+        {   // sonda 3: o sistema respeita o endereco pedido?
+            void* want = (void*)0x140000000ull;
+            void* p = mmap(want, 0x4000000ull, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            fprintf(stderr, "[sonda] endereco pedido %p -> %p (%s)\n", want, p, p == MAP_FAILED ? strerror(errno) : (p == want ? "respeitado" : "ignorado"));
+            if (p != MAP_FAILED) munmap(p, 0x4000000ull);
         }
         // janelas esparsas: a base fica em multiplos de 4 GB, dentro do limite de ~63 GB do usuario no iOS
         bool ok = false;
