@@ -44,5 +44,15 @@ cat > Payload/NGBC.app/Info.plist <<'EOF_PLIST'
 </dict>
 </plist>
 EOF_PLIST
+cat > ents.plist <<'EOF_ENT'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>com.apple.developer.kernel.extended-virtual-addressing</key><true/>
+<key>com.apple.developer.kernel.increased-memory-limit</key><true/>
+</dict></plist>
+EOF_ENT
+brew install ldid > /dev/null 2>&1 || echo "aviso: nao consegui instalar o ldid"
+if command -v ldid > /dev/null; then ldid -Sents.plist Payload/NGBC.app/NGBC && echo "entitlements aplicadas"; fi
 zip -qr NGBC.ipa Payload
 ls -lh NGBC.ipa
