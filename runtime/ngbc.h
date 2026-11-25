@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <string>
 
 extern uint8_t* g_base;          // base da memoria do convidado (4 GB reservados)
@@ -28,3 +29,4 @@ void ngbc_print_summary(const char* motivo);
 
 // kernel.cpp
 void kernel_spawn_main(void (*fn)(PPCContext&, uint8_t*));
+void kernel_spawn_thread(std::function<void(PPCContext&, uint8_t*)> body);   // thread do convidado sem handle
