@@ -66,7 +66,7 @@ if clang++ -std=c++20 -O1 -w -march=native -DNGBC_HOST -DNGBC_ENTRY=$ENTRY -I pp
 EOF_SH
 chmod +x compile_one.sh
 export L
-ls ppc_out/ppc_recomp.*.cpp ppc_out/ppc_func_mapping.cpp ppc_out/stubs_gen.cpp runtime/runtime.cpp runtime/kernel.cpp | xargs -P 4 -n 1 ./compile_one.sh > "$L/compilacao.txt"
+ls ppc_out/ppc_recomp.*.cpp ppc_out/ppc_func_mapping.cpp ppc_out/stubs_gen.cpp runtime/*.cpp | xargs -P 4 -n 1 ./compile_one.sh > "$L/compilacao.txt"
 echo "compilados: $(grep -c '^OK' "$L/compilacao.txt")  falhas: $(grep -c FALHOU "$L/compilacao.txt" || true)"
 for b in $(grep FALHOU "$L/compilacao.txt" | head -n 3 | awk '{print $2}'); do echo "=== erro em $b"; head -n 30 "$L/cc_$b.txt"; done
 set +e
@@ -89,9 +89,9 @@ if [ $RC -ne 0 ]; then
   clang++ obj/*.o -o ngbc_host -rdynamic -lpthread 2> "$L/link2.txt" || { echo "=== erro de link"; head -n 40 "$L/link2.txt"; exit 1; }
 fi
 ls -l ngbc_host
-echo "=== rodando o jogo (25 s)"
+echo "=== rodando o jogo (30 s)"
 set +e
-timeout 90 ./ngbc_host dump/img_image.bin game_extracted 25 > "$L/run_stdout.txt" 2> "$L/run.txt"
+timeout 90 ./ngbc_host dump/img_image.bin game_extracted 30 > "$L/run_stdout.txt" 2> "$L/run.txt"
 echo "saida do jogo: $?"
 set -e
 head -n 150 "$L/run.txt"
