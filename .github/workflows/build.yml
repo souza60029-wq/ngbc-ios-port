@@ -6,6 +6,7 @@ on:
 jobs:
   gerar:
     runs-on: ubuntu-latest
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -13,9 +14,16 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Gerar o C++ do jogo
+      - name: Gerar o C++ do jogo (com descoberta automatica de funcoes)
         shell: bash
-        run: ONLY_GEN=1 bash tools/ci_run.sh 20
+        run: bash tools/ci_run.sh 20
+
+      - name: Guardar os logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-ipa-gerar
+          path: logs/
 
       - name: Guardar o gerado
         uses: actions/upload-artifact@v4
