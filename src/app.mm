@@ -27,9 +27,18 @@ static NSString* gLogPath;
     [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer* t) {
         NSData* d = [NSData dataWithContentsOfFile:gLogPath];
         if (!d) return;
-        NSUInteger n = d.length, keep = 8000;
-        NSData* tail = n > keep ? [d subdataWithRange:NSMakeRange(n - keep, keep)] : d;
-        NSString* s = [[NSString alloc] initWithData:tail encoding:NSUTF8StringEncoding];
+        NSUInteger n = d.length, head = 1800, keep = 6000;
+        NSString* s;
+        if (n > head + keep)
+        {
+            NSString* h = [[NSString alloc] initWithData:[d subdataWithRange:NSMakeRange(0, head)] encoding:NSISOLatin1StringEncoding];
+            NSString* tl = [[NSString alloc] initWithData:[d subdataWithRange:NSMakeRange(n - keep, keep)] encoding:NSISOLatin1StringEncoding];
+            s = [NSString stringWithFormat:@"%@\n[...]\n%@", h, tl];
+        }
+        else
+        {
+            s = [[NSString alloc] initWithData:d encoding:NSISOLatin1StringEncoding];
+        }
         if (!s) s = @"";
         if (![weak.tv.text isEqualToString:s])
         {
