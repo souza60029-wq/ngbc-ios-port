@@ -123,9 +123,8 @@ static void cp_body(PPCContext& ctx, uint8_t* base)
 }
 
 // ---------------- relatorio ----------------
-static void report_thread()
+static void report_once()
 {
-    std::this_thread::sleep_for(std::chrono::seconds(20));
     fprintf(stderr, "\n===== relatorio de video =====\n");
     fprintf(stderr, "anel: fisico=0x%08X bytes=0x%X | writeback=0x%08X | fence do sistema=0x%08X\n", g_ring_phys, g_ring_bytes, g_wb_phys, g_sys_fence);
     fprintf(stderr, "vsyncs=%llu pacotes=%llu interrupcoes=%llu cercas=%llu trocas=%llu desenhos=%llu\n",
@@ -153,6 +152,16 @@ static void report_thread()
     }
     if (g_wb_phys) fprintf(stderr, "valor no writeback: 0x%08X\n", rd32(phys2virt(g_wb_phys)));
     fflush(stderr);
+}
+
+static void report_thread()   // relatorios aos 3 s, 10 s e 20 s (o jogo pode cair antes dos 20 s)
+{
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    report_once();
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    report_once();
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+    report_once();
 }
 
 // ---------------- importacoes de video ----------------
