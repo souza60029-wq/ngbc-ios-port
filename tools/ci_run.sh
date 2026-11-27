@@ -48,7 +48,7 @@ touch "$L/extra_found.txt"
 
 # gera ppc_out com a lista atual de funcoes extras
 gen_cpp() {
-  cat tools/extra_funcs.txt "$L/extra_found.txt" > "$L/extra_all.txt"
+  { cat tools/extra_funcs.txt; echo; cat "$L/extra_found.txt"; } > "$L/extra_all.txt"
   python tools/find_funcs.py dump/img_image.bin "$L/manifest.txt" pass1 "$L/extra_all.txt" > "$L/funcs.toml" 2> "$L/funcs_stats.txt" || true
   cat "$L/funcs_stats.txt"
   cp xr_base.toml xr.toml
@@ -105,7 +105,8 @@ for it in 1 2 3 4 5 6 7 8 9 10; do
   build_host
   echo "=== rodando o jogo (30 s)"
   set +e
-  timeout 90 ./ngbc_host dump/img_image.bin game_extracted 30 > "$L/run_stdout.txt" 2> "$L/run.txt"
+  rm -rf "$L/gpu"; mkdir -p "$L/gpu"
+  NGBC_DUMP_DIR="$L/gpu" timeout 90 ./ngbc_host dump/img_image.bin game_extracted 30 > "$L/run_stdout.txt" 2> "$L/run.txt"
   GRC=$?
   set -e
   cp "$L/run.txt" "$L/run_$it.txt"
@@ -118,6 +119,7 @@ for it in 1 2 3 4 5 6 7 8 9 10; do
   echo "funcao nao descoberta: $A (adicionada)"
   echo "$A" >> "$L/extra_found.txt"
 done
+ls -l "$L/gpu" | head -80 > "$L/gpu_lista.txt" || true
 echo "=== funcoes extras descobertas durante o teste:"
 cat "$L/extra_found.txt"
 for fn in _xstart; do
